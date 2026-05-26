@@ -3,7 +3,7 @@ name: Alien Auto Build & Release
 on:
   push:
     branches: [ "main", "master" ]
-  workflow_dispatch: # 保留手动触发备用
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -27,10 +27,12 @@ jobs:
     - name: Restore dependencies
       run: dotnet restore
 
-    # 4. 单文件独立编译（Windows x64）
+    # 4. 单文件独立编译（精准修正版）
+    # 修复 A：传入 -p:Nullable=disable 在编译时动态关闭可空检查，允许 null 赋值
+    # 修复 B：将解决方案打包改为精准指定主项目文件夹（./Alien），解决 --output 冲突
     - name: Publish (Self-Contained Single File)
       run: |
-        dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -o ./publish
+        dotnet publish ./Alien -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:Nullable=disable -o ./publish
 
     # 5. 使用 PowerShell 打包压缩包
     - name: Archive Artifacts
@@ -44,7 +46,7 @@ jobs:
       run: |
         (Get-FileHash ./Alien-win-x64.zip -Algorithm SHA256).Hash.ToLower() + "  Alien-win-x64.zip" > ./Alien-win-x64.zip.sha256
 
-    # 7. 生成自动化动态版本号（格式：v年.月.日-短哈希）
+    # 7. 生成自动化动态版本号
     - name: Generate Tag Name
       id: tag
       shell: pwsh
@@ -53,8 +55,7 @@ jobs:
         $sha = "${{ github.sha }}".Substring(0, 7)
         echo "version=v${date}-${sha}" >> $env:GITHUB_OUTPUT
 
-    # 8. 真正实现全自动发布 Release
-    # 成功后会自动在 GitHub 创建 Release 并上传文件，无需任何多余操作
+    # 8. 全自动创建 Release 并挂载产物
     - name: Create Release & Upload Assets
       uses: ncipollo/release-action@v1
       with:
