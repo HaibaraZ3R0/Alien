@@ -1,0 +1,101 @@
+name: Alien Build & Release
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  release:
+    types: [created]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          # Windows 64位 - 独立版 (.exe)
+          - os: windows-latest
+            target: win-x64
+            artifact_name: Alien-win-x64
+            archive_cmd: Compress-Archive -Path ./publish/* -DestinationPath ./Alien-win-x64.zip
+            file_to_upload: Alien-win-x64.zip
+          
+          # Linux 64位 - 独立版
+          - os: ubuntu-latest
+            target: linux-x64
+            artifact_name: Alien-linux-x64
+            archive_cmd: tar -czvf Alien-linux-x64.tar.gz -C ./publish .
+            file_to_upload: Alien-linux-x64.tar.gz
+
+          # macOS 64位 (Intel) - 独立版
+          - os: macos-latest
+            target: osx-x64
+            artifact_name: Alien-macos-x64
+            archive_cmd: tar -czvf Alien-macos-x64.tar.gz -C ./publish .
+            file_to_upload: Alien-macos-x64.tar.gz
+
+          # macOS ARM64 (Apple Silicon M1/M2/M3/M4)
+          - os: macos-latest
+            target: osx-arm64
+            artifact_name: Alien-macos-arm64
+            archive_cmd: tar -czvf Alien-macos-arm64.tar.gz -C ./publish .
+            file_to_upload: Alien-macos-arm64.tar.gz
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    # 自动识别和安装 .NET SDK（建议保持与你项目 global.json 或 csproj 一致）
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x' # 如果是 .NET 9 或其他版本，请在此修改
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    # 核心编译步骤：
+    # -p:PublishSingleFile=true  -> 压缩成单个独立可执行文件（对渗透工具极友好，无一堆 dll 碎片）
+    # -p:PublishReadyToRun=true  -> 提前编译，优化启动速度
+    - name: Publish (Self-Contained Single File)
+      run: |
+        dotnet publish -c Release -r ${{ matrix.target }} --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -o ./publish
+
+    # 跨平台打包
+    - name: Archive Production Artifacts
+      shell: bash
+      run: |
+        ${{ matrix.archive_cmd }}
+
+    # 计算哈希值（生成 SHA-256 校验码，防止二进制文件被篡改或下载损坏）
+    - name: Generate SHA256
+      shell: bash
+      run: |
+        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+          sha256sum ${{ matrix.file_to_upload }} > ${{ matrix.file_to_upload }}.sha256
+        else
+          shasum -a 256 ${{ matrix.file_to_upload }} > ${{ matrix.file_to_upload }}.sha256
+        fi
+
+    # 场景 A：日常提交，上传到 Actions Artifacts 供内部测试
+    - name: Upload Temporary Artifacts
+      uses: actions/upload-artifact@v4
+      if: github.event_name != 'release'
+      with:
+        name: ${{ matrix.artifact_name }}
+        path: |
+          ${{ matrix.file_to_upload }}
+          ${{ matrix.file_to_upload }}.sha256
+
+    # 场景 B：正式 Release 发布，自动挂载到 Releases 页面
+    - name: Upload Binaries to Release Assets
+      uses: softprops/action-gh-release@v2
+      if: github.event_name == 'release'
+      with:
+        files: |
+          ${{ matrix.file_to_upload }}
+          ${{ matrix.file_to_upload }}.sha256
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
