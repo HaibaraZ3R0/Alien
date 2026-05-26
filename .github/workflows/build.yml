@@ -1,20 +1,15 @@
-name: Alien Build & Release
+name: Alien Auto Build & Release
 
 on:
   push:
     branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
-  release:
-    types: [created]
-  workflow_dispatch:
+  workflow_dispatch: # 保留手动触发备用
 
-# 顺应 2026 年新规，提前强制运行在 Node.js 24 环境下，消除警告
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  build-windows:
+  build-and-release:
     runs-on: windows-latest
 
     steps:
@@ -22,7 +17,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 2. 配置 .NET 环境（保持你的 C# 项目版本，此处以 8.0.x 为例）
+    # 2. 配置 .NET 环境
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
@@ -49,23 +44,30 @@ jobs:
       run: |
         (Get-FileHash ./Alien-win-x64.zip -Algorithm SHA256).Hash.ToLower() + "  Alien-win-x64.zip" > ./Alien-win-x64.zip.sha256
 
-    # 场景 A：日常提交，上传到 Actions Artifacts
-    - name: Upload Temporary Artifacts
-      uses: actions/upload-artifact@v4
-      if: github.event_name != 'release'
-      with:
-        name: Alien-Windows-x64
-        path: |
-          ./Alien-win-x64.zip
-          ./Alien-win-x64.zip.sha256
+    # 7. 生成自动化动态版本号（格式：v年.月.日-短哈希）
+    - name: Generate Tag Name
+      id: tag
+      shell: pwsh
+      run: |
+        $date = Get-Date -Format "yyyy.MM.dd"
+        $sha = "${{ github.sha }}".Substring(0, 7)
+        echo "version=v${date}-${sha}" >> $env:GITHUB_OUTPUT
 
-    # 场景 B：正式 Release 发布，挂载至 Release Assets
-    - name: Upload Binaries to Release Assets
-      uses: softprops/action-gh-release@v2
-      if: github.event_name == 'release'
+    # 8. 真正实现全自动发布 Release
+    # 成功后会自动在 GitHub 创建 Release 并上传文件，无需任何多余操作
+    - name: Create Release & Upload Assets
+      uses: ncipollo/release-action@v1
       with:
-        files: |
-          ./Alien-win-x64.zip
-          ./Alien-win-x64.zip.sha256
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        artifacts: "./Alien-win-x64.zip,./Alien-win-x64.zip.sha256"
+        tag: ${{ steps.tag.outputs.version }}
+        name: "Alien Auto Release ${{ steps.tag.outputs.version }}"
+        body: |
+          ### 🚀 自动化构建成功通知
+          本版本由 GitHub Actions 全自动编译生成。
+          
+          - **提交分支:** `${{ github.ref_name }}`
+          - **Commit SHA:** [`${{ github.sha }}`](https://github.com/${{ github.repository }}/commit/${{ github.sha }})
+          - **编译时间:** ${{ steps.tag.outputs.version }}
+          
+          *请在下方下载对应的 `win-x64` 免安装独立版及哈希校验文件。*
+        token: ${{ secrets.GITHUB_TOKEN }}
