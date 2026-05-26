@@ -45,14 +45,15 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+   # 1. 拉取仓库代码
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 自动识别和安装 .NET SDK（建议保持与你项目 global.json 或 csproj 一致）
+    # 2. 配置 .NET 环境（请确保这里使用的是 setup-dotnet）
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v4 # 
       with:
-        dotnet-version: '8.0.x' # 如果是 .NET 9 或其他版本，请在此修改
+        dotnet-version: '8.0.x'   
 
     - name: Restore dependencies
       run: dotnet restore
