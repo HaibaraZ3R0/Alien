@@ -9,95 +9,63 @@ on:
     types: [created]
   workflow_dispatch:
 
+# 顺应 2026 年新规，提前强制运行在 Node.js 24 环境下，消除警告
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
-  build:
-    strategy:
-      matrix:
-        include:
-          # Windows 64位 - 独立版 (.exe)
-          - os: windows-latest
-            target: win-x64
-            artifact_name: Alien-win-x64
-            archive_cmd: Compress-Archive -Path ./publish/* -DestinationPath ./Alien-win-x64.zip
-            file_to_upload: Alien-win-x64.zip
-          
-          # Linux 64位 - 独立版
-          - os: ubuntu-latest
-            target: linux-x64
-            artifact_name: Alien-linux-x64
-            archive_cmd: tar -czvf Alien-linux-x64.tar.gz -C ./publish .
-            file_to_upload: Alien-linux-x64.tar.gz
-
-          # macOS 64位 (Intel) - 独立版
-          - os: macos-latest
-            target: osx-x64
-            artifact_name: Alien-macos-x64
-            archive_cmd: tar -czvf Alien-macos-x64.tar.gz -C ./publish .
-            file_to_upload: Alien-macos-x64.tar.gz
-
-          # macOS ARM64 (Apple Silicon M1/M2/M3/M4)
-          - os: macos-latest
-            target: osx-arm64
-            artifact_name: Alien-macos-arm64
-            archive_cmd: tar -czvf Alien-macos-arm64.tar.gz -C ./publish .
-            file_to_upload: Alien-macos-arm64.tar.gz
-
-    runs-on: ${{ matrix.os }}
+  build-windows:
+    runs-on: windows-latest
 
     steps:
-   # 1. 拉取仓库代码
+    # 1. 拉取仓库代码
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 2. 配置 .NET 环境（请确保这里使用的是 setup-dotnet）
+    # 2. 配置 .NET 环境（保持你的 C# 项目版本，此处以 8.0.x 为例）
     - name: Setup .NET
-      uses: actions/setup-dotnet@v4 # 
+      uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '8.0.x'   
 
+    # 3. 还原 NuGet 依赖
     - name: Restore dependencies
       run: dotnet restore
 
-    # 核心编译步骤：
-    # -p:PublishSingleFile=true  -> 压缩成单个独立可执行文件（对渗透工具极友好，无一堆 dll 碎片）
-    # -p:PublishReadyToRun=true  -> 提前编译，优化启动速度
+    # 4. 单文件独立编译（Windows x64）
     - name: Publish (Self-Contained Single File)
       run: |
-        dotnet publish -c Release -r ${{ matrix.target }} --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -o ./publish
+        dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishReadyToRun=true -o ./publish
 
-    # 跨平台打包
-    - name: Archive Production Artifacts
-      shell: bash
+    # 5. 使用 PowerShell 打包压缩包
+    - name: Archive Artifacts
+      shell: pwsh
       run: |
-        ${{ matrix.archive_cmd }}
+        Compress-Archive -Path ./publish/* -DestinationPath ./Alien-win-x64.zip
 
-    # 计算哈希值（生成 SHA-256 校验码，防止二进制文件被篡改或下载损坏）
+    # 6. 计算 SHA-256 校验码
     - name: Generate SHA256
-      shell: bash
+      shell: pwsh
       run: |
-        if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-          sha256sum ${{ matrix.file_to_upload }} > ${{ matrix.file_to_upload }}.sha256
-        else
-          shasum -a 256 ${{ matrix.file_to_upload }} > ${{ matrix.file_to_upload }}.sha256
-        fi
+        (Get-FileHash ./Alien-win-x64.zip -Algorithm SHA256).Hash.ToLower() + "  Alien-win-x64.zip" > ./Alien-win-x64.zip.sha256
 
-    # 场景 A：日常提交，上传到 Actions Artifacts 供内部测试
+    # 场景 A：日常提交，上传到 Actions Artifacts
     - name: Upload Temporary Artifacts
       uses: actions/upload-artifact@v4
       if: github.event_name != 'release'
       with:
-        name: ${{ matrix.artifact_name }}
+        name: Alien-Windows-x64
         path: |
-          ${{ matrix.file_to_upload }}
-          ${{ matrix.file_to_upload }}.sha256
+          ./Alien-win-x64.zip
+          ./Alien-win-x64.zip.sha256
 
-    # 场景 B：正式 Release 发布，自动挂载到 Releases 页面
+    # 场景 B：正式 Release 发布，挂载至 Release Assets
     - name: Upload Binaries to Release Assets
       uses: softprops/action-gh-release@v2
       if: github.event_name == 'release'
       with:
         files: |
-          ${{ matrix.file_to_upload }}
-          ${{ matrix.file_to_upload }}.sha256
+          ./Alien-win-x64.zip
+          ./Alien-win-x64.zip.sha256
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
